@@ -9,7 +9,7 @@
 | 项目名称 | `iflow_tomato` |
 | 创建日期 | 2026年3月2日 |
 | 工作目录 | `D:\Coding_Plan\AI_proj\iflow_tomato` |
-| 版本 | v1.4 |
+| 版本 | v1.5 |
 | 作者 | Mega_HUGO |
 | GitHub | https://github.com/DoggyHU/multi-task-todo-timer |
 
@@ -33,6 +33,13 @@
 - 跳过当前任务（静默执行）
 - **提前完成**：任务执行中可提前标记完成（v1.3 新增）
 - **跳到选定任务**：将目标任务提升到第一位并立即执行（v1.3 新增）
+- **修改-继续任务**：任务执行中修改参数后继续执行（v1.5 新增）
+
+### 任务结束休息功能（v1.5 新增）
+- **自动休息**：任务完成后自动进入休息整顿（默认5分钟，可配置）
+- **休息期间修改**：可修改当前任务的预估时长并重新执行
+- **跳过不触发**：跳过任务不会触发休息
+- **可配置时间**：标题栏提供输入框，可自定义任务间休整时间
 
 ### 日志统计功能
 - **自动记录**：任务完成/跳过时自动保存到本地 JSON 文件
@@ -45,6 +52,11 @@
 - **月度统计**：任务数、完成率、专注时长、休息时长等
 - **日志导出**：支持导出为 CSV 格式
 - **跳转终止记录**：支持 `jump_terminated` 完成类型（v1.3 新增）
+
+### 时长统计显示（v1.5 新增）
+- **任务总时长**：所有任务的预估时长 + 任务内休息时长
+- **任务间休整总时间**：(未完成任务数 - 1) × 用户设置的休整时间
+- **总安排时长**：任务总时长 + 任务间休整总时间（加粗显示）
 
 ### 拖拽排序规则（v1.3 新增）
 - **未计时状态**：所有未完成任务可自由拖拽排序
@@ -89,7 +101,7 @@
 ```
 iflow_tomato/
 ├── AGENTS.md              # 项目上下文说明
-├── timer_app.py           # 主程序源码（~2200行）
+├── timer_app.py           # 主程序源码（~2497行）
 ├── clock_icon.ico         # 应用图标
 ├── 多任务队列计时闹钟.spec  # PyInstaller 配置
 ├── .gitignore             # Git 忽略配置
@@ -119,29 +131,49 @@ iflow_tomato/
 
 ```
 timer_app.py
-├── TaskItem          # 任务数据结构
+├── TaskItem          # 任务数据结构（L41）
 │   ├── name, duration, break_count, break_duration
 │   ├── completed, skipped, early_completed, jump_terminated
 │   ├── actual_focus_minutes, remaining_duration (跳转终止时使用)
 │   ├── drag_handle   # 拖拽手柄控件
 │   └── to_dict()     # 序列化为日志记录
-├── Logger            # 日志记录器
+├── Logger            # 日志记录器（L111）
+│   ├── _ensure_logs_dir()   # 确保日志目录存在
+│   ├── _get_log_file_path() # 获取日志文件路径
+│   ├── _read_log()          # 读取日志
+│   ├── _write_log()         # 写入日志
 │   ├── log_task()           # 记录任务完成/跳过/跳转终止
 │   ├── get_month_logs()     # 获取月度日志
 │   ├── get_month_statistics() # 月度统计
 │   └── export_month_to_csv() # CSV导出
-└── TimerApp          # 主程序
-    ├── _create_ui()         # 构建界面
-    ├── _start_queue()       # 开始队列
-    ├── _run_timer()         # 倒计时逻辑
+└── TimerApp          # 主程序（L315）
+    ├── 状态变量
+    │   ├── is_edit_mode        # 修改模式（继续任务功能）
+    │   ├── saved_task_index    # 保存的任务索引
+    │   ├── saved_work_segment  # 保存的工作段
+    │   ├── is_post_task_break  # 任务结束休息状态
+    │   └── post_break_var      # 任务间休整时间（用户可配置）
+    ├── _create_ui()            # 构建界面
+    ├── _create_title_area()    # 标题区域（含任务间休整输入框）
+    ├── _create_task_queue_area() # 任务队列区域
+    ├── _create_timer_display_area() # 计时显示区域
+    ├── _create_control_buttons_area() # 控制按钮区域
+    ├── _create_footer()        # 底部信息
+    ├── _start_queue()          # 开始队列
+    ├── _run_timer()            # 倒计时逻辑
+    ├── _task_completed()       # 任务完成处理
+    ├── _start_post_task_break() # 开始任务结束休息（v1.5）
+    ├── _on_post_task_break_end() # 任务结束休息完成处理（v1.5）
+    ├── _resume_task()          # 继续任务（v1.5）
     ├── _show_toast_notification() # Toast 通知
     ├── _show_calendar_window() # 日历统计窗口
     ├── _on_drag_start/motion/release() # 拖拽事件处理
     ├── _jump_to_selected_task() # 跳转到选定任务
-    ├── _execute_jump()      # 跳转核心逻辑
+    ├── _execute_jump()         # 跳转核心逻辑
     ├── _fix_window_border_cursor() # 修复边框光标（v1.4）
-    ├── _on_window_resize()  # 窗口大小变化处理（v1.4）
-    └── _on_closing()        # 关闭清理
+    ├── _on_window_resize()     # 窗口大小变化处理（v1.4）
+    ├── _update_total_duration() # 更新时长统计显示（v1.5）
+    └── _on_closing()           # 关闭清理
 ```
 
 ## 开发历程
@@ -182,6 +214,13 @@ timer_app.py
 12. ✅ 边框光标修复：Windows API 确保 WS_THICKFRAME 样式，修复 Win11 光标问题
 13. ✅ 自适应布局：Canvas 宽度随窗口大小自动调整
 14. ✅ 窗口最小尺寸：调整为 920 × 500 像素，确保内容完整显示
+15. ✅ 按钮重命名：开始 → 新的开始
+16. ✅ 继续任务按钮：新增"继续任务"按钮，支持修改后继续执行
+17. ✅ 任务结束休息：任务完成后自动进入5分钟休息整顿
+18. ✅ 修改模式逻辑：休息期间可修改时长并重新执行
+19. ✅ 时长统计显示：新增任务总时长、任务间休整总时间、总安排时长
+20. ✅ 总安排时长加粗：突出显示总安排时长
+21. ✅ 可配置休整时间：任务间休整时间支持用户自定义（默认5分钟）
 
 ## 使用说明
 
@@ -211,6 +250,15 @@ pyinstaller --clean "多任务队列计时闹钟.spec"
 | `early_complete` | 提前完成（用户主动点击提前完成按钮） |
 | `skipped` | 跳过（用户主动跳过任务） |
 | `jump_terminated` | 跳转终止（因跳转到其他任务而被终止） |
+
+## Git 提交历史
+
+| 版本 | 提交信息 |
+|------|----------|
+| v1.5 | 任务结束休息功能 + 修改继续任务 + 可配置休整时间 |
+| v1.4 | 窗口可调整大小 + 边框光标修复 + 自适应布局 |
+| v1.3 | 拖拽排序、跳转任务、Toast通知、提前完成等功能 |
+| v1.2 | Initial commit: 多任务队列计时闹钟 |
 
 ## 备注
 

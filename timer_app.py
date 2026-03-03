@@ -357,6 +357,16 @@ class TimerApp:
         self.remaining_seconds = 0
         self.completed_tasks = 0
         
+        # 修改模式状态（用于"继续任务"功能）
+        self.is_edit_mode = False
+        self.saved_task_index = 0
+        self.saved_work_segment = 0
+        self.saved_break_count = 0
+        self.saved_is_in_break = False
+        
+        # 任务结束休息状态（任务完成后自动5分钟休息）
+        self.is_post_task_break = False  # 是否处于任务结束休息状态
+        
         # 计时器ID
         self.timer_id = None
         
@@ -408,7 +418,7 @@ class TimerApp:
         )
         title_label.pack(side=tk.LEFT, padx=20)
         
-        # 日志统计按钮
+        # 日志统计按钮（先pack，确保在最右边）
         self.log_btn = tk.Button(
             title_frame, text="📅 日志统计", 
             command=self._show_calendar_window,
@@ -416,7 +426,25 @@ class TimerApp:
             bg="#333333", fg="white", activebackground="#555555",
             padx=10, pady=2
         )
-        self.log_btn.pack(side=tk.RIGHT, padx=20)
+        self.log_btn.pack(side=tk.RIGHT, padx=10)
+        
+        # 任务间休整时间设置（后pack，在日志统计按钮左边）
+        post_break_frame = tk.Frame(title_frame, bg="#f0f0f0")
+        post_break_frame.pack(side=tk.RIGHT, padx=5)
+        
+        post_break_label = tk.Label(
+            post_break_frame, text="任务间休整(分钟):",
+            font=("Microsoft YaHei", 9), bg="#f0f0f0", fg="#333333"
+        )
+        post_break_label.pack(side=tk.LEFT)
+        
+        self.post_break_var = tk.StringVar(value="5")
+        self.post_break_entry = tk.Entry(
+            post_break_frame, textvariable=self.post_break_var,
+            width=4, font=("Microsoft YaHei", 9), justify=tk.CENTER
+        )
+        self.post_break_entry.pack(side=tk.LEFT, padx=2)
+        self.post_break_entry.bind("<KeyRelease>", lambda e: self._update_total_duration())
     
     def _create_task_queue_area(self):
         """创建任务队列区（支持滚动）"""
@@ -837,10 +865,22 @@ class TimerApp:
         self.task_progress_label.pack(anchor=tk.W)
         
         self.total_duration_label = tk.Label(
-            info_frame, text="安排任务总时长：0分钟",
+            info_frame, text="任务总时长：0分钟",
             font=("Microsoft YaHei", 10), bg="#f0f0f0", fg="#22C55E"
         )
         self.total_duration_label.pack(anchor=tk.W)
+        
+        self.post_break_label = tk.Label(
+            info_frame, text="任务间休整总时间：0分钟",
+            font=("Microsoft YaHei", 10), bg="#f0f0f0", fg="#22C55E"
+        )
+        self.post_break_label.pack(anchor=tk.W)
+        
+        self.total_schedule_label = tk.Label(
+            info_frame, text="总安排时长：0分钟",
+            font=("Microsoft YaHei", 10, "bold"), bg="#f0f0f0", fg="#22C55E"
+        )
+        self.total_schedule_label.pack(anchor=tk.W)
     
     def _create_control_buttons_area(self):
         """创建全局控制按钮区"""
@@ -848,7 +888,7 @@ class TimerApp:
         control_frame.pack(fill=tk.X)
         
         self.start_btn = tk.Button(
-            control_frame, text="开始", width=14,
+            control_frame, text="新的开始", width=14,
             command=self._start_queue, font=("Microsoft YaHei", 10, "bold"),
             bg="#333333", fg="white", activebackground="#555555"
         )
@@ -867,6 +907,13 @@ class TimerApp:
             bg="#e0e0e0", fg="#333333", activebackground="#d0d0d0"
         )
         self.edit_btn.pack(side=tk.LEFT, padx=8)
+        
+        self.resume_task_btn = tk.Button(
+            control_frame, text="继续任务", width=10,
+            command=self._resume_task, font=("Microsoft YaHei", 10),
+            state=tk.DISABLED, bg="#e0e0e0", fg="#999999", activebackground="#d0d0d0"
+        )
+        self.resume_task_btn.pack(side=tk.LEFT, padx=8)
         
         self.skip_btn = tk.Button(
             control_frame, text="跳过当前任务", width=12,
@@ -1023,9 +1070,20 @@ class TimerApp:
                 task.delete_btn.config(state=tk.DISABLED)
     
     def _update_total_duration(self):
-        """更新安排任务总时长"""
-        total_minutes = 0
+        """更新任务总时长、任务间休整总时间、总安排时长"""
+        task_total_minutes = 0  # 任务总时长（包含任务内休息）
+        post_break_total = 0    # 任务间休整总时间（每个任务完成后的5分钟）
+        
+        # 统计未完成的任务数量（用于计算任务间休整）
+        incomplete_task_count = 0
+        
         for task in self.tasks:
+            # 跳过已完成或已跳过的任务
+            if task.completed or task.skipped:
+                continue
+            
+            incomplete_task_count += 1
+            
             # 获取任务参数（从输入框读取最新值）
             try:
                 duration = int(task.duration_var.get()) if task.duration_var else task.duration
@@ -1042,16 +1100,39 @@ class TimerApp:
             except:
                 break_duration = task.break_duration
             
-            # 总时长 = 预估时长 + 休息次数 * 休息时长
-            total_minutes += duration + break_count * break_duration
+            # 任务总时长 = 预估时长 + 休息次数 * 休息时长
+            task_total_minutes += duration + break_count * break_duration
         
-        # 格式化显示
-        if total_minutes >= 60:
-            hours = total_minutes // 60
-            mins = total_minutes % 60
-            self.total_duration_label.config(text=f"安排任务总时长：{hours}小时{mins}分钟（共{total_minutes}分钟）")
+        # 任务间休整总时间 = (未完成任务数 - 1) * 用户设置的休整时间
+        # 最后一个任务完成后不需要休整
+        if incomplete_task_count > 1:
+            try:
+                post_break_minutes = int(self.post_break_var.get())
+            except:
+                post_break_minutes = 5
+            post_break_total = (incomplete_task_count - 1) * post_break_minutes
+        
+        # 总安排时长 = 任务总时长 + 任务间休整总时间
+        total_schedule_minutes = task_total_minutes + post_break_total
+        
+        # 格式化显示 - 任务总时长
+        if task_total_minutes >= 60:
+            hours = task_total_minutes // 60
+            mins = task_total_minutes % 60
+            self.total_duration_label.config(text=f"任务总时长：{hours}小时{mins}分钟（共{task_total_minutes}分钟）")
         else:
-            self.total_duration_label.config(text=f"安排任务总时长：{total_minutes}分钟")
+            self.total_duration_label.config(text=f"任务总时长：{task_total_minutes}分钟")
+        
+        # 格式化显示 - 任务间休整总时间
+        self.post_break_label.config(text=f"任务间休整总时间：{post_break_total}分钟")
+        
+        # 格式化显示 - 总安排时长
+        if total_schedule_minutes >= 60:
+            hours = total_schedule_minutes // 60
+            mins = total_schedule_minutes % 60
+            self.total_schedule_label.config(text=f"总安排时长：{hours}小时{mins}分钟（共{total_schedule_minutes}分钟）")
+        else:
+            self.total_schedule_label.config(text=f"总安排时长：{total_schedule_minutes}分钟")
     
     def _highlight_current_task(self):
         """高亮当前正在计时的任务行"""
@@ -1121,6 +1202,10 @@ class TimerApp:
     def _validate_tasks(self):
         """验证所有任务参数"""
         for i, task in enumerate(self.tasks):
+            # 跳过已完成或已跳过的任务（它们的预估时长可能为0）
+            if task.completed or task.skipped:
+                continue
+            
             # 获取任务名称
             task.name = task.name_var.get().strip() or f"任务{task.task_id}"
             
@@ -1346,9 +1431,94 @@ class TimerApp:
         self.pause_btn.config(state=tk.NORMAL, text="暂停")
         self.skip_btn.config(state=tk.NORMAL)
         self.early_complete_btn.config(state=tk.NORMAL)
+        self.resume_task_btn.config(state=tk.DISABLED, fg="#999999")
+        
+        # 重置修改模式状态
+        self.is_edit_mode = False
         
         # 开始当前任务
         self._start_current_task()
+    
+    def _resume_task(self):
+        """继续任务（使用新的预估时长和休息次数重新计算分割）"""
+        if not self.is_edit_mode:
+            return
+        
+        # 验证任务参数
+        valid, error_msg = self._validate_tasks()
+        if not valid:
+            self._show_toast_notification("参数错误", error_msg)
+            return
+        
+        # 锁定UI
+        self._lock_ui(True)
+        
+        # 获取当前任务
+        task = self.tasks[self.saved_task_index]
+        
+        # 从输入框读取新的预估时长和休息次数
+        try:
+            new_duration = int(task.duration_var.get())
+            if new_duration <= 0:
+                new_duration = 1
+        except (ValueError, AttributeError):
+            new_duration = 1
+        
+        try:
+            new_break_count = int(task.break_count_var.get())
+            if new_break_count < 0:
+                new_break_count = 0
+        except (ValueError, AttributeError):
+            new_break_count = 0
+        
+        # 更新任务的预估时长和休息次数
+        task.duration = new_duration
+        task.break_count = new_break_count
+        
+        # 如果之前是任务结束休息状态，重置任务完成状态
+        if self.is_post_task_break:
+            task.completed = False
+            task.early_completed = False
+            self.completed_tasks -= 1  # 减少已完成计数
+        
+        # 重置任务结束休息状态
+        self.is_post_task_break = False
+        
+        # 重新开始当前任务（从第一个工作段开始，按照新的参数分割）
+        self.is_running = True
+        self.is_paused = False
+        self.is_edit_mode = False
+        self.current_task_index = self.saved_task_index
+        self.current_work_segment = 0
+        self.current_break_count = 0
+        self.is_in_break = False
+        
+        # 记录任务开始时间
+        task.start_time = datetime.now()
+        
+        # 计算单段工作时长
+        total_segments = task.calculate_work_segments()
+        single_work_minutes = new_duration / total_segments
+        self.remaining_seconds = int(single_work_minutes * 60)
+        
+        # 更新状态显示
+        self.status_label.config(text="当前状态：工作中")
+        self.current_task_label.config(text=f"当前任务：【任务{task.task_id}】{task.name}")
+        self._update_progress_display()
+        
+        # 更新按钮状态
+        self.start_btn.config(state=tk.DISABLED)
+        self.pause_btn.config(state=tk.NORMAL, text="暂停")
+        self.skip_btn.config(state=tk.NORMAL)
+        self.early_complete_btn.config(state=tk.NORMAL)
+        self.resume_task_btn.config(state=tk.DISABLED, fg="#999999")
+        
+        # 高亮当前任务
+        self._highlight_current_task()
+        
+        # 开始倒计时（从第一段工作开始）
+        self.current_work_segment = 1
+        self._run_timer()
     
     def _start_current_task(self):
         """开始当前任务"""
@@ -1451,6 +1621,11 @@ class TimerApp:
         task = self.tasks[self.current_task_index]
         total_segments = task.calculate_work_segments()
         
+        if self.is_post_task_break:
+            # 任务结束休息完毕，检查是否需要跳转到下一个任务
+            self._on_post_task_break_end()
+            return
+        
         if self.is_in_break:
             # 休息结束，继续工作（Toast 自带提示音）
             self._show_toast_notification("休息结束", "休息结束，继续完成任务", silent=False)
@@ -1471,8 +1646,62 @@ class TimerApp:
                 # 任务完成
                 self._task_completed()
     
+    def _start_post_task_break(self):
+        """开始任务结束后的休息（时间由用户设置）"""
+        self.is_post_task_break = True
+        
+        # 获取用户设置的休整时间（分钟）
+        try:
+            post_break_minutes = int(self.post_break_var.get())
+        except:
+            post_break_minutes = 5
+        
+        self.remaining_seconds = post_break_minutes * 60
+        
+        # 更新状态显示
+        self.status_label.config(text="当前状态：任务结束休息中")
+        self.task_progress_label.config(text=f"任务进度：任务已完成，{post_break_minutes}分钟休息整顿")
+        
+        # Toast提示
+        task = self.tasks[self.current_task_index]
+        self._show_toast_notification("任务已完成", f"【任务{task.task_id}】已完成，进入{post_break_minutes}分钟休息整顿", silent=False)
+        
+        # 开始倒计时
+        self._run_timer()
+    
+    def _on_post_task_break_end(self):
+        """任务结束休息结束后的处理"""
+        self.is_post_task_break = False
+        
+        # 获取用户设置的休整时间（分钟）
+        try:
+            post_break_minutes = int(self.post_break_var.get())
+        except:
+            post_break_minutes = 5
+        
+        self._show_toast_notification("休息结束", f"{post_break_minutes}分钟休息结束", silent=False)
+        
+        # 检查当前任务的预估时长是否为0
+        task = self.tasks[self.current_task_index]
+        try:
+            duration = int(task.duration_var.get())
+        except (ValueError, AttributeError):
+            duration = 0
+        
+        if duration <= 0:
+            # 预估时长为0，跳转到下一个任务
+            self.current_task_index += 1
+            if self.current_task_index < len(self.tasks):
+                self._start_current_task()
+            else:
+                self._queue_completed()
+        else:
+            # 预估时长不为0，重新执行当前任务
+            self.is_edit_mode = False
+            self._start_current_task()
+    
     def _task_completed(self):
-        """当前任务完成（正常完成）"""
+        """当前任务完成（正常完成）- 触发5分钟休息"""
         task = self.tasks[self.current_task_index]
         self.completed_tasks += 1
         task.completed = True
@@ -1483,20 +1712,17 @@ class TimerApp:
         # 更新任务显示为已完成（打勾）
         self._highlight_current_task()
         
-        self._show_toast_notification("任务完成", f"恭喜！【任务{task.task_id}】已完成")
-        self._play_sound()
+        # 将预估时长设为0（因为任务已完成）
+        if task.duration_var:
+            task.duration_var.set("0")
         
-        # 切换到下一个任务
-        self.current_task_index += 1
-        
-        if self.current_task_index < len(self.tasks):
-            self._start_current_task()
-        else:
-            self._queue_completed()
+        # 开始5分钟休息（不自动跳转到下一个任务）
+        self._start_post_task_break()
     
     def _queue_completed(self):
         """队列全部完成"""
         self.is_running = False
+        self.is_edit_mode = False
         
         self._show_toast_notification("队列完成", f"恭喜！所有任务已全部完成！本次共完成{self.completed_tasks}条任务")
         self._play_sound()
@@ -1509,6 +1735,7 @@ class TimerApp:
         self.pause_btn.config(state=tk.DISABLED, text="暂停")
         self.skip_btn.config(state=tk.DISABLED)
         self.early_complete_btn.config(state=tk.DISABLED)
+        self.resume_task_btn.config(state=tk.DISABLED, fg="#999999")
         
         # 更新状态显示
         self.status_label.config(text="当前状态：已完成")
@@ -1536,6 +1763,49 @@ class TimerApp:
     
     def _edit_tasks(self):
         """修改任务（保留所有已配置数据，进入编辑模式）"""
+        # 保存当前任务进度（用于"继续任务"功能）
+        was_running = self.is_running or self.is_paused or self.is_post_task_break
+        if was_running:
+            self.is_edit_mode = True
+            self.saved_task_index = self.current_task_index
+            self.saved_work_segment = self.current_work_segment
+            self.saved_break_count = self.current_break_count
+            self.saved_is_in_break = self.is_in_break
+            
+            # 计算任务的整体剩余时长并填入预估时长输入框
+            task = self.tasks[self.current_task_index]
+            
+            # 如果是任务结束休息期间，预估时长已经是0了，不需要修改
+            if self.is_post_task_break:
+                # 任务结束休息期间，预估时长保持为0（已在_task_completed中设置）
+                pass
+            elif not self.is_in_break:
+                # 工作中：计算整体剩余时长
+                # 当前段剩余时间
+                current_segment_remaining = (self.remaining_seconds + 59) // 60  # 向上取整
+                
+                # 计算剩余工作段数（包括当前段）
+                total_segments = task.calculate_work_segments()
+                remaining_segments = total_segments - self.current_work_segment + 1
+                
+                # 单段原始时长
+                original_single_segment = task.duration / total_segments
+                
+                # 整体剩余时长 = 当前段剩余 + (剩余段数-1) × 单段原始时长
+                total_remaining = current_segment_remaining + (remaining_segments - 1) * original_single_segment
+                
+                if task.duration_var:
+                    task.duration_var.set(str(int(total_remaining)))
+            else:
+                # 休息中：剩余工作段数 × 单段时长
+                total_segments = task.calculate_work_segments()
+                remaining_segments = total_segments - self.current_work_segment  # 休息结束后进入下一段工作
+                original_single_segment = task.duration / total_segments
+                total_remaining = remaining_segments * original_single_segment
+                
+                if task.duration_var:
+                    task.duration_var.set(str(int(total_remaining)))
+        
         # 停止计时但不重置进度
         self.is_running = False
         self.is_paused = False
@@ -1552,18 +1822,25 @@ class TimerApp:
         self.skip_btn.config(state=tk.DISABLED)
         self.early_complete_btn.config(state=tk.DISABLED)
         
+        # 如果之前正在执行任务，启用"继续任务"按钮
+        if was_running:
+            self.resume_task_btn.config(state=tk.NORMAL, fg="#333333")
+        else:
+            self.resume_task_btn.config(state=tk.DISABLED, fg="#999999")
+        
         # 状态显示保持当前进度
         self.status_label.config(text="当前状态：待开始")
     
     def _skip_current_task(self):
-        """跳过当前任务（记录到日志但不计入时长统计）"""
-        if not self.is_running:
-            return
-        
+        """跳过当前任务（记录到日志但不计入时长统计，不触发5分钟休息）"""
         # 停止计时
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
+        
+        # 重置任务结束休息状态
+        self.is_post_task_break = False
+        self.is_in_break = False
         
         # 标记当前任务为已跳过
         task = self.tasks[self.current_task_index]
@@ -1575,8 +1852,11 @@ class TimerApp:
         # 更新显示
         self._highlight_current_task()
         
-        # 切换到下一个任务
+        # 直接跳到下一个任务（不触发5分钟休息）
         self.current_task_index += 1
+        self.is_running = True  # 保持运行状态以启动下一个任务
+        self.is_paused = False
+        self.is_edit_mode = False
         
         if self.current_task_index < len(self.tasks):
             self._start_current_task()
@@ -1584,7 +1864,31 @@ class TimerApp:
             self._queue_completed()
     
     def _early_complete_current_task(self):
-        """提前完成当前任务（记录实际耗时，计入日志）"""
+        """提前完成当前任务 - 在休息整顿期间直接跳到下一个任务，否则触发5分钟休息"""
+        # 如果是在任务结束休息整顿期间点击，直接跳到下一个任务
+        if self.is_post_task_break:
+            # 停止计时
+            if self.timer_id:
+                self.root.after_cancel(self.timer_id)
+                self.timer_id = None
+            
+            # 重置休息状态
+            self.is_post_task_break = False
+            self.is_in_break = False
+            
+            # 跳到下一个任务
+            self.current_task_index += 1
+            self.is_running = True
+            self.is_paused = False
+            self.is_edit_mode = False
+            
+            if self.current_task_index < len(self.tasks):
+                self._show_toast_notification("跳过休息", "跳过休息整顿，开始下一个任务")
+                self._start_current_task()
+            else:
+                self._queue_completed()
+            return
+        
         if not self.is_running:
             return
         
@@ -1611,19 +1915,17 @@ class TimerApp:
         # 更新显示
         self._highlight_current_task()
         
+        # 将预估时长设为0（因为任务已完成）
+        if task.duration_var:
+            task.duration_var.set("0")
+        
         # 显示通知
         actual_min = task.actual_duration_seconds // 60
         actual_sec = task.actual_duration_seconds % 60
         self._show_toast_notification("提前完成", f"【任务{task.task_id}】已提前完成！实际耗时：{actual_min}分{actual_sec}秒")
-        self._play_sound()
         
-        # 切换到下一个任务
-        self.current_task_index += 1
-        
-        if self.current_task_index < len(self.tasks):
-            self._start_current_task()
-        else:
-            self._queue_completed()
+        # 开始5分钟休息（不自动跳转到下一个任务）
+        self._start_post_task_break()
     
     def _jump_to_selected_task(self):
         """跳转到选定的任务"""
