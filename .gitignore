@@ -1,6 +1,5 @@
 # Build artifacts
 build/
-dist/
 *.spec
 
 # Python
@@ -11,6 +10,9 @@ __pycache__/
 .Python
 *.egg-info/
 .eggs/
+
+# Logs (user data)
+logs/
 
 # Memory data
 memory_data/

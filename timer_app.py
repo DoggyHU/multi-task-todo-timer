@@ -16,6 +16,8 @@ import json
 import subprocess
 from datetime import datetime, timedelta
 import calendar
+import ctypes
+from ctypes import windll
 
 
 def resource_path(relative_path):
@@ -317,6 +319,10 @@ class TimerApp:
         self.root = root
         self.root.title("多任务队列计时闹钟")
         
+        # 列宽定义（像素）- 统一表头和数据行
+        self.col_widths = [40, 320, 90, 90, 90, 50]  # 拖拽、任务名称、预估时长、休息次数、休息时长、删除
+        self.total_width = sum(self.col_widths) + 40  # 总宽度 + padding
+        
         # 设置窗口图标
         try:
             icon_path = resource_path('clock_icon.ico')
@@ -324,7 +330,15 @@ class TimerApp:
         except Exception:
             pass  # 图标加载失败时使用默认图标
         
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)  # 启用窗口调整大小
+        # 窗口最小尺寸
+        self.root.minsize(self.total_width + 200, 500)
+        
+        # 确保窗口有正常的边框样式（修复 Windows 11 边框光标问题）
+        self._fix_window_border_cursor()
+        
+        # 绑定窗口大小变化事件
+        self.root.bind("<Configure>", self._on_window_resize)
         
         # 初始化日志记录器
         self.logger = Logger()
@@ -407,20 +421,17 @@ class TimerApp:
     def _create_task_queue_area(self):
         """创建任务队列区（支持滚动）"""
         # 外层容器
-        queue_outer_frame = tk.LabelFrame(self.root, text="任务队列", padx=5, pady=5, bg="#f0f0f0", fg="#333333")
-        queue_outer_frame.pack(fill=tk.BOTH, padx=10, pady=5)
-        
-        # 列宽定义（像素）- 统一表头和数据行
-        self.col_widths = [40, 280, 100, 80, 100, 50]  # 拖拽、任务名称、预估时长、休息次数、休息时长、删除
-        self.total_width = sum(self.col_widths) + 30  # 总宽度 + padding
+        self.queue_outer_frame = tk.LabelFrame(self.root, text="任务队列", padx=5, pady=5, bg="#f0f0f0", fg="#333333")
+        self.queue_outer_frame.pack(fill=tk.BOTH, padx=10, pady=5, expand=True)
         
         # 创建Canvas和Scrollbar实现滚动
-        self.canvas_frame = tk.Frame(queue_outer_frame, bg="#f0f0f0")
+        self.canvas_frame = tk.Frame(self.queue_outer_frame, bg="#f0f0f0")
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.canvas = tk.Canvas(self.canvas_frame, height=210, width=self.total_width, 
+        # Canvas 不设固定宽度，自适应窗口
+        self.canvas = tk.Canvas(self.canvas_frame, height=210, 
                                bg="#f0f0f0", highlightthickness=0)
-        scrollbar = tk.Scrollbar(self.canvas_frame, orient="vertical", command=self.canvas.yview)
+        self.scrollbar = tk.Scrollbar(self.canvas_frame, orient="vertical", command=self.canvas.yview)
         
         # 统一的表格容器（类似 HTML <table>）
         self.table_frame = tk.Frame(self.canvas, bg="#f0f0f0")
@@ -429,11 +440,11 @@ class TimerApp:
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
         
-        self.canvas.create_window((0, 0), window=self.table_frame, anchor="nw", width=self.total_width)
-        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.table_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # 绑定鼠标滚轮
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
@@ -455,7 +466,7 @@ class TimerApp:
         self.next_row = 1
         
         # 任务队列控制按钮
-        btn_frame = tk.Frame(queue_outer_frame, bg="#f0f0f0")
+        btn_frame = tk.Frame(self.queue_outer_frame, bg="#f0f0f0")
         btn_frame.pack(fill=tk.X, pady=5)
         
         self.add_task_btn = tk.Button(
@@ -489,6 +500,49 @@ class TimerApp:
     def _on_mousewheel(self, event):
         """鼠标滚轮事件处理"""
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    
+    def _fix_window_border_cursor(self):
+        """修复 Windows 边框光标问题"""
+        try:
+            # 获取窗口句柄
+            self.root.update_idletasks()
+            hwnd = windll.user32.GetParent(self.root.winfo_id())
+            
+            # 获取当前窗口样式
+            GWL_STYLE = -16
+            style = windll.user32.GetWindowLongW(hwnd, GWL_STYLE)
+            
+            # 确保窗口有可调整大小的边框样式
+            WS_THICKFRAME = 0x00040000
+            WS_MAXIMIZEBOX = 0x00010000
+            
+            # 如果样式没有包含 WS_THICKFRAME，添加它
+            if not (style & WS_THICKFRAME):
+                style |= WS_THICKFRAME
+                windll.user32.SetWindowLongW(hwnd, GWL_STYLE, style)
+            
+            # 强制窗口重绘
+            SWP_FRAMECHANGED = 0x0020
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            windll.user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 
+                                       SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER)
+        except Exception:
+            pass  # 如果 Windows API 调用失败，忽略错误
+    
+    def _on_window_resize(self, event):
+        """窗口大小变化时调整内部控件"""
+        # 只处理来自 root 的事件
+        if event.widget != self.root:
+            return
+        
+        # 获取窗口宽度，减去边距和滚动条宽度
+        window_width = event.width
+        table_width = max(self.total_width, window_width - 50)  # 至少保持 total_width
+        
+        # 更新 Canvas 内的 table_frame 宽度
+        self.canvas.itemconfig(self.canvas_window, width=table_width)
     
     def _on_task_select(self, task):
         """点击选中任务（用于跳转功能）"""
@@ -835,7 +889,7 @@ class TimerApp:
         
         footer_label = tk.Label(
             footer_frame, 
-            text="Mega_HUGO", 
+            text="V1.3 Mega_HUGO 2026.03", 
             font=("Microsoft YaHei", 8),
             bg="#f0f0f0", fg="#888888"
         )

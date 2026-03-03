@@ -9,7 +9,7 @@
 | 项目名称 | `iflow_tomato` |
 | 创建日期 | 2026年3月2日 |
 | 工作目录 | `D:\Coding_Plan\AI_proj\iflow_tomato` |
-| 版本 | v1.3 |
+| 版本 | v1.4 |
 | 作者 | Mega_HUGO |
 | GitHub | https://github.com/DoggyHU/multi-task-todo-timer |
 
@@ -58,6 +58,12 @@
 - 当前任务扣除已消耗时间后移到第二位
 - 自动记录当前任务的实际专注时长和已用休息次数
 
+### 窗口调整功能（v1.4 新增）
+- **可调整大小**：窗口支持自由拖拽调整宽高
+- **最小尺寸**：920 × 500 像素
+- **自适应布局**：内部控件随窗口大小自动适配
+- **边框光标修复**：使用 Windows API 修复 Windows 11 边框调整光标不显示的问题
+
 ### 视觉设计
 - 黑/白/灰主色调
 - 绿色时间数字（#22C55E）
@@ -74,6 +80,7 @@
 | 语言 | Python 3.14.2 |
 | GUI | tkinter（原生库，无第三方依赖） |
 | 通知 | Windows Toast（PowerShell + WinRT API） |
+| 系统API | ctypes + windll（窗口边框样式修复） |
 | 数据存储 | JSON 文件 |
 | 打包 | PyInstaller |
 
@@ -82,7 +89,7 @@
 ```
 iflow_tomato/
 ├── AGENTS.md              # 项目上下文说明
-├── timer_app.py           # 主程序源码（~2140行）
+├── timer_app.py           # 主程序源码（~2200行）
 ├── clock_icon.ico         # 应用图标
 ├── 多任务队列计时闹钟.spec  # PyInstaller 配置
 ├── .gitignore             # Git 忽略配置
@@ -92,6 +99,21 @@ iflow_tomato/
 ├── logs/                  # 日志存储（运行时自动生成）
 └── memory_data/           # 记忆存储目录
 ```
+
+## 窗口尺寸配置
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| 拖拽列 | 40px | 拖拽手柄 |
+| 任务名称列 | 320px | 任务名输入框 |
+| 预估时长列 | 90px | 时长输入 |
+| 休息次数列 | 90px | 次数输入 |
+| 休息时长列 | 90px | 时长输入 |
+| 删除列 | 50px | 删除按钮 |
+| 列宽总和 | 680px | - |
+| total_width | 720px | 列宽 + padding(40) |
+| 窗口最小宽度 | 920px | total_width + 200 |
+| 窗口最小高度 | 500px | - |
 
 ## 核心类结构
 
@@ -117,6 +139,8 @@ timer_app.py
     ├── _on_drag_start/motion/release() # 拖拽事件处理
     ├── _jump_to_selected_task() # 跳转到选定任务
     ├── _execute_jump()      # 跳转核心逻辑
+    ├── _fix_window_border_cursor() # 修复边框光标（v1.4）
+    ├── _on_window_resize()  # 窗口大小变化处理（v1.4）
     └── _on_closing()        # 关闭清理
 ```
 
@@ -153,6 +177,11 @@ timer_app.py
 7. ✅ 删除序号列：简化界面，修复列索引错位问题
 8. ✅ 拖拽权限控制：计时中当前任务锁定，其他任务只能拖到后面
 9. ✅ GitHub 仓库重命名：multi-task-todo-timer-.git → multi-task-todo-timer.git
+10. ✅ 窗口图标修复：.spec 文件添加 datas 配置，嵌入图标到 EXE
+11. ✅ 窗口可调整大小：启用 resizable，支持拖拽调整窗口尺寸
+12. ✅ 边框光标修复：Windows API 确保 WS_THICKFRAME 样式，修复 Win11 光标问题
+13. ✅ 自适应布局：Canvas 宽度随窗口大小自动调整
+14. ✅ 窗口最小尺寸：调整为 920 × 500 像素，确保内容完整显示
 
 ## 使用说明
 
@@ -166,7 +195,7 @@ python timer_app.py
 
 ### 打包命令
 ```bash
-pyinstaller --onefile --windowed --icon=clock_icon.ico --name=多任务队列计时闹钟 timer_app.py
+pyinstaller --clean "多任务队列计时闹钟.spec"
 ```
 
 ### 日志存储
