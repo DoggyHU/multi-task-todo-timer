@@ -9,8 +9,9 @@
 | 项目名称 | `iflow_tomato` |
 | 创建日期 | 2026年3月2日 |
 | 工作目录 | `D:\Coding_Plan\AI_proj\iflow_tomato` |
-| 版本 | v1.2 |
+| 版本 | v1.3 |
 | 作者 | Mega_HUGO |
+| GitHub | https://github.com/DoggyHU/multi-task-todo-timer |
 
 ## 功能特性
 
@@ -25,13 +26,15 @@
 - 批量导入任务（支持 `- [ ]` 前缀格式）
 - 替换所有任务 / 新增到现有任务
 - 清空所有任务
+- **拖拽排序**：拖拽调整任务顺序（v1.3 新增）
 
 ### 控制功能
 - 开始/暂停/继续
 - 跳过当前任务（静默执行）
-- 修改任务（保留当前进度）
+- **提前完成**：任务执行中可提前标记完成（v1.3 新增）
+- **跳到选定任务**：将目标任务提升到第一位并立即执行（v1.3 新增）
 
-### 日志统计功能（v1.1 新增）
+### 日志统计功能
 - **自动记录**：任务完成/跳过时自动保存到本地 JSON 文件
 - **存储方式**：按日期分文件存储（`logs/YYYY-MM-DD.json`）
 - **日历视图**：月历样式，支持月份切换
@@ -41,6 +44,19 @@
   - ⬜ 灰色：无任务
 - **月度统计**：任务数、完成率、专注时长、休息时长等
 - **日志导出**：支持导出为 CSV 格式
+- **跳转终止记录**：支持 `jump_terminated` 完成类型（v1.3 新增）
+
+### 拖拽排序规则（v1.3 新增）
+- **未计时状态**：所有未完成任务可自由拖拽排序
+- **计时中状态**：
+  - 正在执行的任务（第一行）位置锁定，不可拖拽
+  - 其他任务只能拖到第二行及之后的位置
+- 拖拽时源任务高亮绿色，目标位置高亮黄色
+
+### 跳转任务规则（v1.3 新增）
+- 目标任务自动提升到第一位并开始执行
+- 当前任务扣除已消耗时间后移到第二位
+- 自动记录当前任务的实际专注时长和已用休息次数
 
 ### 视觉设计
 - 黑/白/灰主色调
@@ -49,6 +65,7 @@
 - 已完成/跳过任务：浅绿色背景
 - 表头固定吸顶
 - 自定义窗口图标（时钟样式）
+- 拖拽手柄：⋮⋮ 符号
 
 ## 技术栈
 
@@ -65,7 +82,7 @@
 ```
 iflow_tomato/
 ├── AGENTS.md              # 项目上下文说明
-├── timer_app.py           # 主程序源码（~1500行）
+├── timer_app.py           # 主程序源码（~2140行）
 ├── clock_icon.ico         # 应用图标
 ├── 多任务队列计时闹钟.spec  # PyInstaller 配置
 ├── .gitignore             # Git 忽略配置
@@ -82,10 +99,12 @@ iflow_tomato/
 timer_app.py
 ├── TaskItem          # 任务数据结构
 │   ├── name, duration, break_count, break_duration
-│   ├── completed, skipped
+│   ├── completed, skipped, early_completed, jump_terminated
+│   ├── actual_focus_minutes, remaining_duration (跳转终止时使用)
+│   ├── drag_handle   # 拖拽手柄控件
 │   └── to_dict()     # 序列化为日志记录
 ├── Logger            # 日志记录器
-│   ├── log_task()           # 记录任务完成/跳过
+│   ├── log_task()           # 记录任务完成/跳过/跳转终止
 │   ├── get_month_logs()     # 获取月度日志
 │   ├── get_month_statistics() # 月度统计
 │   └── export_month_to_csv() # CSV导出
@@ -95,6 +114,9 @@ timer_app.py
     ├── _run_timer()         # 倒计时逻辑
     ├── _show_toast_notification() # Toast 通知
     ├── _show_calendar_window() # 日历统计窗口
+    ├── _on_drag_start/motion/release() # 拖拽事件处理
+    ├── _jump_to_selected_task() # 跳转到选定任务
+    ├── _execute_jump()      # 跳转核心逻辑
     └── _on_closing()        # 关闭清理
 ```
 
@@ -122,10 +144,15 @@ timer_app.py
 19. ✅ 批量替换优化：清除旧日志避免统计错误
 
 ### 2026年3月3日
-- ✅ 项目文档维护：AGENTS.md 结构优化
-- ✅ Toast 通知：弹窗改为 Windows 系统通知栏消息
-- ✅ 通知声音：休息开始静音，休息结束播放 Toast 默认声音
-- ✅ 重新打包：EXE 更新
+1. ✅ Toast 通知：弹窗改为 Windows 系统通知栏消息
+2. ✅ 通知声音：休息开始静音，休息结束播放 Toast 默认声音
+3. ✅ 提前完成：新增"提前完成"按钮，任务执行中可提前结束
+4. ✅ 实时总时长：修改任务参数时自动更新总时长显示
+5. ✅ 拖拽排序：支持拖拽调整任务顺序
+6. ✅ 跳到选定任务：将目标任务提升到第一位并执行
+7. ✅ 删除序号列：简化界面，修复列索引错位问题
+8. ✅ 拖拽权限控制：计时中当前任务锁定，其他任务只能拖到后面
+9. ✅ GitHub 仓库重命名：multi-task-todo-timer-.git → multi-task-todo-timer.git
 
 ## 使用说明
 
@@ -137,10 +164,24 @@ python timer_app.py
 ### EXE 运行
 双击 `dist\多任务队列计时闹钟.exe`
 
+### 打包命令
+```bash
+pyinstaller --onefile --windowed --icon=clock_icon.ico --name=多任务队列计时闹钟 timer_app.py
+```
+
 ### 日志存储
 - 日志自动保存在 EXE 所在目录的 `logs/` 文件夹
 - 每天一个 JSON 文件，按日期命名
 - 批量替换任务会清除当天日志
+
+## 任务完成类型
+
+| 类型 | 说明 |
+|------|------|
+| `normal_complete` | 正常完成（所有工作段执行完毕） |
+| `early_complete` | 提前完成（用户主动点击提前完成按钮） |
+| `skipped` | 跳过（用户主动跳过任务） |
+| `jump_terminated` | 跳转终止（因跳转到其他任务而被终止） |
 
 ## 备注
 
